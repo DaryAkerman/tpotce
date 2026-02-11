@@ -67,7 +67,6 @@ jobs:
   powershell_lint:
     name: PowerShell (PSScriptAnalyzer)
     runs-on: ubuntu-latest
-    # Optional: don’t block merges on ps1 lint (set to false if you want it blocking)
     continue-on-error: true
 
     steps:
@@ -78,18 +77,27 @@ jobs:
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
-          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
 
-          $files = Get-ChildItem -Path . -Recurse -File -Filter *.ps1
-          if (-not $files) {
+          # Use installed module if present; otherwise install once.
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+            Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -AllowClobber
+          }
+
+          $paths = Get-ChildItem -Path . -Recurse -File -Filter *.ps1 | Select-Object -ExpandProperty FullName
+          if (-not $paths) {
             Write-Host "No .ps1 files found."
             exit 0
           }
 
-          $results = Invoke-ScriptAnalyzer -Path $files.FullName -Recurse -Severity Warning,Error
+          # Ensure it's a string array
+          [string[]]$paths = $paths
+
+          $results = Invoke-ScriptAnalyzer -Path $paths -Severity Warning,Error
           if ($results) {
             $results | Format-Table -AutoSize
             throw "PSScriptAnalyzer found issues."
+          } else {
+            Write-Host "PSScriptAnalyzer: OK"
           }
 
   dockerfile_lint:
