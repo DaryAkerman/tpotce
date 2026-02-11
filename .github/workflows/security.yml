@@ -73,32 +73,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run PSScriptAnalyzer
+      - name: Run PSScriptAnalyzer (per file)
         shell: pwsh
         run: |
           Set-StrictMode -Version Latest
 
-          # Use installed module if present; otherwise install once.
           if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
             Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -AllowClobber
           }
 
-          $paths = Get-ChildItem -Path . -Recurse -File -Filter *.ps1 | Select-Object -ExpandProperty FullName
-          if (-not $paths) {
+          $files = Get-ChildItem -Path . -Recurse -File -Filter *.ps1
+          if (-not $files) {
             Write-Host "No .ps1 files found."
             exit 0
           }
 
-          # Ensure it's a string array
-          [string[]]$paths = $paths
+          $allFindings = @()
 
-          $results = Invoke-ScriptAnalyzer -Path $paths -Severity Warning,Error
-          if ($results) {
-            $results | Format-Table -AutoSize
-            throw "PSScriptAnalyzer found issues."
-          } else {
-            Write-Host "PSScriptAnalyzer: OK"
+          foreach ($f in $files) {
+            Write-Host "==> Analyzing $($f.FullName)"
+            $r = Invoke-ScriptAnalyzer -Path $f.FullName -Severity Warning,Error
+            if ($r) { $allFindings += $r }
           }
+
+          if ($allFindings.Count -gt 0) {
+            $allFindings | Sort-Object Path, Line, RuleName | Format-Table -AutoSize
+            throw "PSScriptAnalyzer found issues."
+          }
+
+          Write-Host "PSScriptAnalyzer: OK"
 
   dockerfile_lint:
     name: Dockerfiles (hadolint)
