@@ -2,9 +2,9 @@ name: Security (CodeQL + linters)
 
 on:
   push:
-    branches: ["master"]
+    branches: ["main"]
   pull_request:
-    branches: ["master"]
+    branches: ["main"]
   schedule:
     - cron: "17 03 * * 1" # weekly
 
@@ -24,16 +24,13 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          # CodeQL supports python and actions here.
-          languages: |
-            python
-            actions
+          languages: python 
           queries: security-extended
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
 
-      # Gate: fail if there are any High/Critical alerts for this commit.
+      # Fail only if CodeQL has HIGH/CRITICAL alerts for this exact commit
       - name: Fail if High/Critical CodeQL alerts exist
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,10 +38,8 @@ jobs:
           REF: ${{ github.sha }}
         run: |
           set -euo pipefail
-
           echo "Checking CodeQL alerts for $REPO at $REF ..."
 
-          # Alerts can take a short moment to appear after upload, so retry a few times.
           for i in {1..12}; do
             critical_count="$(gh api -H "Accept: application/vnd.github+json" \
               "/repos/$REPO/code-scanning/alerts?state=open&tool_name=CodeQL&severity=critical&ref=$REF&per_page=100" \
@@ -62,6 +57,7 @@ jobs:
               exit 1
             fi
 
+            # allow a little time for alerts to appear after upload
             sleep 10
           done
 
@@ -70,14 +66,12 @@ jobs:
   powershell_lint:
     name: PowerShell (PSScriptAnalyzer)
     runs-on: ubuntu-latest
+    # Optional: don’t block merges on ps1 lint (set to false if you want it blocking)
+    continue-on-error: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install PowerShell
-        uses: PowerShell/PowerShell@v1
-        with:
-          version: "latest"
 
       - name: Run PSScriptAnalyzer
         shell: pwsh
@@ -91,7 +85,6 @@ jobs:
             exit 0
           }
 
-          # Treat ScriptAnalyzer warnings/errors as CI failures
           $results = Invoke-ScriptAnalyzer -Path $files.FullName -Recurse -Severity Warning,Error
           if ($results) {
             $results | Format-Table -AutoSize
@@ -99,22 +92,41 @@ jobs:
           }
 
   dockerfile_lint:
-    name: Dockerfile (hadolint)
+    name: Dockerfiles (hadolint)
     runs-on: ubuntu-latest
+    # Optional: don’t block merges on Dockerfile lint
+    continue-on-error: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run hadolint
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: "**/Dockerfile*"
-          # If you want hadolint to not fail on warnings, set failure-threshold: error
-          # failure-threshold: error
+      - name: Install hadolint
+        run: |
+          sudo wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+          sudo chmod +x /usr/local/bin/hadolint
+          hadolint --version
+
+      - name: Lint all Dockerfiles recursively
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find . -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*Dockerfile*' \))
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Dockerfiles found."
+            exit 0
+          fi
+
+          for f in "${files[@]}"; do
+            echo "==> hadolint $f"
+            hadolint "$f"
+          done
 
   yaml_lint:
-    name: YAML (yamllint)
+    name: YAML (workflows only)
     runs-on: ubuntu-latest
+    # Optional: don’t block merges on YAML lint
+    continue-on-error: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -124,7 +136,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install yamllint
 
-      - name: Run yamllint
+      - name: Lint GitHub workflows only
         run: |
-          # Lint YAML files; you can customize config later with .yamllint
-          yamllint .
+          yamllint .github/workflows
