@@ -1,0 +1,130 @@
+name: Security (CodeQL + linters)
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+  schedule:
+    - cron: "17 03 * * 1" # weekly
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  codeql:
+    name: CodeQL (Python + GitHub Actions)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          # CodeQL supports python and actions here.
+          languages: |
+            python
+            actions
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+
+      # Gate: fail if there are any High/Critical alerts for this commit.
+      - name: Fail if High/Critical CodeQL alerts exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          echo "Checking CodeQL alerts for $REPO at $REF ..."
+
+          # Alerts can take a short moment to appear after upload, so retry a few times.
+          for i in {1..12}; do
+            critical_count="$(gh api -H "Accept: application/vnd.github+json" \
+              "/repos/$REPO/code-scanning/alerts?state=open&tool_name=CodeQL&severity=critical&ref=$REF&per_page=100" \
+              | jq 'length')"
+
+            high_count="$(gh api -H "Accept: application/vnd.github+json" \
+              "/repos/$REPO/code-scanning/alerts?state=open&tool_name=CodeQL&severity=high&ref=$REF&per_page=100" \
+              | jq 'length')"
+
+            total=$((critical_count + high_count))
+            echo "High: $high_count | Critical: $critical_count | Total: $total"
+
+            if [ "$total" -gt 0 ]; then
+              echo "❌ Failing: found High/Critical CodeQL alerts."
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          echo "✅ No High/Critical CodeQL alerts found."
+
+  powershell_lint:
+    name: PowerShell (PSScriptAnalyzer)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PowerShell
+        uses: PowerShell/PowerShell@v1
+        with:
+          version: "latest"
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+
+          $files = Get-ChildItem -Path . -Recurse -File -Filter *.ps1
+          if (-not $files) {
+            Write-Host "No .ps1 files found."
+            exit 0
+          }
+
+          # Treat ScriptAnalyzer warnings/errors as CI failures
+          $results = Invoke-ScriptAnalyzer -Path $files.FullName -Recurse -Severity Warning,Error
+          if ($results) {
+            $results | Format-Table -AutoSize
+            throw "PSScriptAnalyzer found issues."
+          }
+
+  dockerfile_lint:
+    name: Dockerfile (hadolint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: "**/Dockerfile*"
+          # If you want hadolint to not fail on warnings, set failure-threshold: error
+          # failure-threshold: error
+
+  yaml_lint:
+    name: YAML (yamllint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: |
+          python -m pip install --upgrade pip
+          pip install yamllint
+
+      - name: Run yamllint
+        run: |
+          # Lint YAML files; you can customize config later with .yamllint
+          yamllint .
