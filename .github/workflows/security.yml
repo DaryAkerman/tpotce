@@ -24,7 +24,8 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: python 
+          # IMPORTANT: must be a YAML list (not a multiline string)
+          languages: python
           queries: security-extended
 
       - name: Perform CodeQL Analysis
