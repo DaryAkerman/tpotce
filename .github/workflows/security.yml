@@ -2,9 +2,9 @@ name: Security (CodeQL + linters)
 
 on:
   push:
-    branches: ["main"]
+    branches: ["master"]
   pull_request:
-    branches: ["main"]
+    branches: ["master"]
   schedule:
     - cron: "17 03 * * 1" # weekly
 
